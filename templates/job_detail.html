@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{job['Job ID']}} — Job Analysis</title>
+<link rel="stylesheet" href="{{url_for('static',filename='style.css')}}">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"></head>
+<body>
+<header class="topbar"><div><div class="brand">Job Analysis</div><div class="subtitle">{{job['Job ID']}}</div></div><a class="btn" href="{{url_for('index')}}">← Job Monitor</a></header>
+<main class="page">
+<section class="job-head"><div><div class="job-title"><h1>{{job['Job ID']}}</h1><span class="pill {{(job['Priority'] or '')|lower}}">{{job['Priority'] or '-'}}</span></div>
+<div class="job-meta">{{job['Site Name'] or '-'}} • {{job['Province Name'] or '-'}} • {{job['District Name'] or '-'}}</div></div>
+<button id="runBtn" class="btn primary" onclick="runAnalysis()">Run Live Analysis</button></section>
+
+<section class="analysis-top">
+<div class="risk-card" id="riskCard"><div class="muted">Flood Risk</div><div id="riskLevel" class="big">ยังไม่ได้วิเคราะห์</div><div id="riskReason" class="small">กด Run Live Analysis เพื่อดึงข้อมูลจริง</div></div>
+<div class="car-card" id="carCard"><div class="muted">Small Car</div><div id="carDecision" class="big">ยังไม่ได้วิเคราะห์</div><div id="carReason" class="small">ผลจะอิงระดับน้ำและหลักฐานที่ระบบดึงได้</div></div>
+<div class="source-card"><div class="muted">Data Sources</div><div id="sourceStatus" class="sources">รอการเชื่อมต่อ</div></div>
+</section>
+
+<section class="analysis-grid">
+<div class="info-card"><div class="card-head"><div><h2>Flood Stations</h2><span id="waterSummary">-</span></div></div><div id="floodList" class="list"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
+<div class="info-card"><div class="card-head"><div><h2>Elevation</h2></div></div><div id="elevation" class="metric-panel">ยังไม่มีข้อมูล</div><div class="note">Elevation เป็นข้อมูลภูมิประเทศ ไม่ใช่ความลึกน้ำท่วม</div></div>
+<div class="info-card"><div class="card-head"><div><h2>Traffy Reports</h2><span>ใกล้จุดงาน</span></div></div><div id="traffyList" class="list"><div class="empty">ยังไม่มีข้อมูล</div></div></div>
+<div class="info-card"><div class="card-head"><div><h2>Route Analysis</h2></div></div>
+<div class="route-form"><div><label>Destination Lat</label><input id="destLat" type="number" step="any" placeholder="13.xxxxx"></div>
+<div><label>Destination Lng</label><input id="destLng" type="number" step="any" placeholder="100.xxxxx"></div>
+<button class="btn" onclick="runRoute()">Calculate Route</button></div>
+<div id="route" class="metric-panel">ระบุปลายทางเพื่อคำนวณ Route</div></div>
+</section>
+
+<section class="info-card"><div class="card-head"><div><h2>Evidence & Decision Rules</h2><span>ใช้ข้อมูลที่ตรวจสอบได้</span></div></div><div id="evidence" class="evidence">ยังไม่มีผลวิเคราะห์</div></section>
+<section class="map-card detail-map"><div class="card-head"><div><h2>Job Location</h2></div></div><div id="map"></div></section>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const jobId={{job['Job ID']|tojson}},lat={{job['Job_Lat'] if job['Job_Lat'] is not none else 'null'}},lng={{job['Job_Long'] if job['Job_Long'] is not none else 'null'}};
+const map=L.map('map').setView(lat!==null?[lat,lng]:[13.7563,100.5018],lat!==null?14:10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+if(lat!==null)L.marker([lat,lng]).addTo(map).bindPopup(jobId).openPopup();
+function esc(v){return String(v??'-').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));}
+function runAnalysis(dest=false){
+ const p=new URLSearchParams();
+ if(dest){if(destLat.value)p.set('dest_lat',destLat.value);if(destLng.value)p.set('dest_lng',destLng.value);}
+ runBtn.disabled=true;riskLevel.textContent='กำลังดึงข้อมูล...';
+ fetch('/api/job/'+encodeURIComponent(jobId)+'/analysis?'+p).then(r=>r.json()).then(render).catch(e=>riskReason.textContent=e.message).finally(()=>runBtn.disabled=false);
+}
+function render(d){
+ if(!d.ok){riskLevel.textContent='ไม่สามารถวิเคราะห์';riskReason.textContent=d.error;return;}
+ const r=d.risk,c=d.small_car;
+ riskLevel.textContent=r.label||r.level;riskReason.textContent=(r.evidence||[]).join(' • ')||'ไม่มีหลักฐานเพียงพอ';
+ riskCard.className='risk-card risk-'+String(r.level).toLowerCase();
+ carDecision.textContent=c.decision;carReason.textContent=c.reason;
+ carCard.className='car-card '+(c.decision==='ไม่ควรผ่าน'?'car-block':c.decision==='หลีกเลี่ยง'?'car-avoid':c.decision==='ต้องระวัง'?'car-caution':'');
+ sourceStatus.innerHTML=(d.sources||[]).map(s=>'<div><span class="'+(s.available?'ok':'off')+'">'+(s.available?'●':'○')+'</span> '+esc(s.name)+(s.available?'':' — '+esc(s.reason))+'</div>').join('');
+ const st=d.flood.stations||[],max=d.flood.max_water_cm;
+ waterSummary.textContent=max!=null?'Max '+Number(max).toFixed(1)+' cm':'ไม่มีระดับน้ำยืนยัน';
+ floodList.innerHTML=st.length?st.map(x=>'<div class="list-row"><b>'+esc(x.name)+'</b><span>'+Number(x.water_level_cm).toFixed(1)+' cm</span><small>'+Number(x.distance_km).toFixed(2)+' km</small></div>').join(''):'<div class="empty">ไม่มีสถานีที่อยู่ในรัศมี หรือ API ไม่พร้อม</div>';
+ const e=d.elevation;elevation.innerHTML=e.available?'<div class="metric"><strong>'+Number(e.elevation_m).toFixed(2)+'</strong><span>m</span></div><div>Resolution: '+esc(e.resolution_m)+' m</div>':'<div class="empty">'+esc(e.reason)+'</div>';
+ const tr=d.traffy.reports||[];traffyList.innerHTML=tr.length?tr.map(x=>'<div class="list-row"><b>'+esc(x.title||'Traffy report')+'</b><span>'+Number(x.distance_km).toFixed(2)+' km</span><small>'+esc(x.category||'')+'</small></div>').join(''):'<div class="empty">ไม่มีรายงานที่ดึงได้</div>';
+ renderRoute(d.route);evidence.innerHTML=(r.evidence||[]).map(x=>'<div class="evidence-row">✓ '+esc(x)+'</div>').join('')||'<div class="empty">ยังไม่มีหลักฐานเพียงพอ</div>';
+}
+function renderRoute(x){route.innerHTML=x&&x.available?'<div class="metric"><strong>'+(Number(x.distance_m)/1000).toFixed(2)+'</strong><span>km</span></div><div>Duration: '+esc(x.duration)+'</div>':'<div class="empty">'+esc(x?.reason||'ยังไม่มีข้อมูล Route')+'</div>';}
+function runRoute(){if(!destLat.value||!destLng.value){alert('กรุณาระบุปลายทาง');return;}runAnalysis(true);}
+</script></body></html>

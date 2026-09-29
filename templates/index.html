@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bangkok Metropolitan Flood Analyzer — Job Monitor</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+<header class="topbar">
+  <div><div class="brand">Bangkok Metropolitan Flood Analyzer</div><div class="subtitle">Job Monitor • Flood Analysis Ready</div></div>
+  <form class="upload" action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".xlsx,.xls" required><button class="btn primary">Upload Job Monitor</button>
+  </form>
+</header>
+<main class="page">
+{% with messages=get_flashed_messages(with_categories=true) %}
+{% for category,msg in messages %}<div class="flash {{category}}">{{msg}}</div>{% endfor %}
+{% endwith %}
+<section class="filter-card">
+<form method="get" class="filters">
+  <div class="field"><label>Sub System</label><select name="sub_system"><option value="">All Sub System</option>{% for x in sub_systems %}<option value="{{x}}" {% if filters.sub_system==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
+  <div class="field"><label>Zone</label><select name="zone"><option value="">All Zone</option>{% for x in zones %}<option value="{{x}}" {% if filters.zone==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
+  <div class="field"><label>Priority</label><select name="priority"><option value="">All Priority</option>{% for x in priorities %}<option value="{{x}}" {% if filters.priority==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
+  <div class="field"><label>Status</label><select name="status"><option value="">All Status</option>{% for x in statuses %}<option value="{{x}}" {% if filters.status==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
+  <div class="field"><label>Province</label><select name="province"><option value="">All Province</option>{% for x in provinces %}<option value="{{x}}" {% if filters.province==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
+  <div class="field search"><label>Search Job / Site / Staff</label><input name="q" value="{{filters.q}}" placeholder="Job ID, Site Name, Job Title..."></div>
+  <div class="actions"><button class="btn primary">Apply Filter</button><a class="btn" href="{{url_for('index')}}">Clear</a></div>
+</form>
+</section>
+<section class="stats">
+<div class="stat"><span>Total Jobs</span><strong>{{"{:,}".format(counts.total or 0)}}</strong></div>
+<div class="stat critical"><span>Critical</span><strong>{{"{:,}".format(counts.critical or 0)}}</strong></div>
+<div class="stat major"><span>Major</span><strong>{{"{:,}".format(counts.major or 0)}}</strong></div>
+<div class="stat minor"><span>Minor</span><strong>{{"{:,}".format(counts.minor or 0)}}</strong></div>
+<div class="stat"><span>Mapped</span><strong>{{"{:,}".format(counts.mapped or 0)}}</strong></div>
+</section>
+<section class="content-grid">
+<div class="table-card">
+<div class="card-head"><div><h2>Job Monitor</h2><span>{{"{:,}".format(total)}} รายการ</span></div></div>
+<div class="table-wrap"><table><thead><tr>
+<th>Job ID</th><th>Sub System</th><th>Zone</th><th>Priority</th><th>Status</th><th>Province</th><th>Site Name</th><th>Coordinates</th><th></th>
+</tr></thead><tbody>
+{% for j in jobs %}<tr>
+<td><a class="jobid" href="{{url_for('job_detail',job_id=j['Job ID'])}}">{{j['Job ID']}}</a></td>
+<td>{{j['Sub System'] or '-'}}</td><td>{{j['Zone'] or '-'}}</td>
+<td><span class="pill {{(j['Priority'] or '')|lower}}">{{j['Priority'] or '-'}}</span></td>
+<td class="status-cell">{{j['Status'] or '-'}}</td><td>{{j['Province Name'] or '-'}}</td>
+<td class="site">{{j['Site Name'] or '-'}}</td>
+<td>{% if j['Job_Lat'] is not none and j['Job_Long'] is not none %}{{"%.5f"|format(j['Job_Lat'])}}, {{"%.5f"|format(j['Job_Long'])}}{% else %}-{% endif %}</td>
+<td><a class="details" href="{{url_for('job_detail',job_id=j['Job ID'])}}">Analysis →</a></td>
+</tr>{% else %}<tr><td colspan="9" class="empty">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="pagination">
+{% if page>1 %}<a class="btn" href="{{url_for('index',page=page-1,**filters)}}">← Prev</a>{% endif %}
+<span>หน้า {{page}} / {{pages}}</span>
+{% if page<pages %}<a class="btn" href="{{url_for('index',page=page+1,**filters)}}">Next →</a>{% endif %}
+</div>
+</div>
+<div class="map-card"><div class="card-head"><div><h2>Job Map</h2><span>งานที่มีพิกัด สูงสุด 1,000 จุด</span></div></div><div id="map"></div></div>
+</section>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([13.7563,100.5018],10);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+fetch('{{url_for("api_jobs")}}').then(r=>r.json()).then(rows=>{
+ const bounds=[];
+ rows.forEach(j=>{
+   const m=L.circleMarker([j.lat,j.lng],{radius:6,weight:1});
+   m.bindPopup('<b>'+j.job_id+'</b><br>Priority: '+(j.priority||'-')+'<br>Status: '+(j.status||'-')+'<br>Sub System: '+(j.sub_system||'-')+'<br>Zone: '+(j.zone||'-')+'<br><a href="/job/'+encodeURIComponent(j.job_id)+'">Open Analysis</a>').addTo(map);
+   bounds.push([j.lat,j.lng]);
+ });
+ if(bounds.length) map.fitBounds(bounds,{padding:[20,20]});
+});
+</script>
+</body></html>

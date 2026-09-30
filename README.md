@@ -1,29 +1,35 @@
-# Flood Site Base Operations Dashboard
+# FloodBoard + Site Base Operations Dashboard
 
-Dashboard สำหรับ Site Base เฉพาะ 4 จังหวัด:
-- กรุงเทพมหานคร
-- ปทุมธานี
-- นนทบุรี
-- สมุทรปราการ
+Dashboard แบบเต็มจอสำหรับติดตาม Site Base 55,569 จุด โดยใช้ Flask + SQLite + Leaflet และอ้างอิงชั้นถนนน้ำท่วมจาก FloodBoard Open Data
 
-## Job Monitor Excel
-สามารถ Upload Excel Job Monitor ได้จากหน้า Dashboard โดยระบบจะ:
-1. ตรวจหา column Title Job / Job Title / Title อัตโนมัติ
-2. วิเคราะห์ Job ID จาก Title Job
-3. วิเคราะห์ Site Code จาก Title Job
-4. วิเคราะห์ Latitude / Longitude จาก Title Job โดยรองรับรูปแบบ `Latitude: 13.x, Longitude: 100.x` และ `13.x, 100.x`
-5. ถ้า Title ไม่มีพิกัด แต่พบ Site Code ใน Site Base ระบบจะเติมพิกัดจาก Site Base และระบุ Coordinate Source = `site_base`
-6. Match Site Code กับฐานข้อมูล Site Base 4 จังหวัด
-7. แสดง Job เป็นหมุดสีม่วงบนแผนที่
-8. แสดงตาราง Job และ Export ผลวิเคราะห์เป็น Excel
+## ฟังก์ชัน
+- แผนที่เต็มจอ + Street/Satellite
+- Site Base 55,569 จุด
+- Marker สีตามสถานะน้ำใกล้เคียง
+  - แดง: น้ำลึก/เสี่ยง >= 70 cm
+  - ส้ม: 20–69 cm
+  - เหลือง: ระดับต่ำ/น้ำลด
+  - เขียว: ไม่พบถนนน้ำท่วมใกล้เคียง
+- ค้นหา Site แล้ว Zoom ไปยังจุดทันที
+- Filter จังหวัด / อำเภอ
+- Dashboard สรุปจำนวน Site ทั้งหมด, ใกล้พื้นที่น้ำท่วม, ระดับรุนแรง/ปานกลาง/ต่ำ และ Site ที่ไม่พบถนนน้ำท่วมใกล้เคียง
+- ตาราง Site
+- Export รายงานเป็น Excel ตามตัวกรอง พร้อมสถานะน้ำและระยะจากถนนที่ FloodBoard รายงาน
+- FloodBoard GeoJSON cache 60 วินาที
 
-รองรับไฟล์ `.xlsx`, `.xlsm`, `.xltx`, `.xltm` และอ่าน worksheet แรกของไฟล์
-
-## Run
-
-```powershell
+## ติดตั้ง
+```bash
+python -m venv .venv
+# Windows
+.venv\\Scripts\\activate
+# macOS/Linux
+# source .venv/bin/activate
 pip install -r requirements.txt
 python app.py
 ```
-
 เปิด `http://127.0.0.1:5000`
+
+## หมายเหตุเรื่องสถานะน้ำ
+สถานะของ Site เป็น **operational proximity indicator** โดยจับคู่พิกัด Site กับถนนที่ FloodBoard รายงานในรัศมีประมาณ 100–170 เมตร ไม่ใช่แบบจำลองพื้นที่น้ำท่วมเชิงไฮดรอลิก ดังนั้นควรใช้เป็นตัวช่วยคัดกรองและตรวจสอบกับข้อมูลภาคสนามอีกครั้ง
+
+FloodBoard ระบุว่า Open Data ประกอบด้วย `roads.geojson`, `reports.csv`, `stats.json` และ `feed.json` และข้อมูลอาจไม่ครบ ล่าช้า หรือผิดพลาดได้

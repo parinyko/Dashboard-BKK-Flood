@@ -12,6 +12,8 @@ for c in ['site_code','location_name','tumbol','amphur','province']:
     df[c]=df[c].fillna('').astype(str).str.strip()
 for c in ['latitude','longitude']:
     df[c]=pd.to_numeric(df[c],errors='coerce')
+ALLOWED_PROVINCES = ['กรุงเทพมหานคร', 'ปทุมธานี', 'นนทบุรี', 'สมุทรปราการ']
+df=df[df['province'].isin(ALLOWED_PROVINCES)].copy()
 df=df.dropna(subset=['latitude','longitude'])
 conn=sqlite3.connect(DB)
 df.to_sql('sites',conn,if_exists='replace',index=False)

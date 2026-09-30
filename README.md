@@ -1,29 +1,50 @@
-# Flood Site Base Operations Dashboard
+# Flood Site Base Map - Python / Flask
 
-Dashboard สำหรับ Site Base เฉพาะ 4 จังหวัด:
-- กรุงเทพมหานคร
-- ปทุมธานี
-- นนทบุรี
-- สมุทรปราการ
+เว็บไซต์แผนที่ Site Base สำหรับข้อมูลจาก `Location Site(3).xlsx`
 
-## Job Monitor Excel
-สามารถ Upload Excel Job Monitor ได้จากหน้า Dashboard โดยระบบจะ:
-1. ตรวจหา column Title Job / Job Title / Title อัตโนมัติ
-2. วิเคราะห์ Job ID จาก Title Job
-3. วิเคราะห์ Site Code จาก Title Job
-4. วิเคราะห์ Latitude / Longitude จาก Title Job โดยรองรับรูปแบบ `Latitude: 13.x, Longitude: 100.x` และ `13.x, 100.x`
-5. ถ้า Title ไม่มีพิกัด แต่พบ Site Code ใน Site Base ระบบจะเติมพิกัดจาก Site Base และระบุ Coordinate Source = `site_base`
-6. Match Site Code กับฐานข้อมูล Site Base 4 จังหวัด
-7. แสดง Job เป็นหมุดสีม่วงบนแผนที่
-8. แสดงตาราง Job และ Export ผลวิเคราะห์เป็น Excel
+## 1. ติดตั้ง
 
-รองรับไฟล์ `.xlsx`, `.xlsm`, `.xltx`, `.xltm` และอ่าน worksheet แรกของไฟล์
+Windows:
 
-## Run
-
-```powershell
+```bash
+python -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+## 2. วางไฟล์ Excel
+
+วาง:
+
+```text
+Location Site(3).xlsx
+```
+
+ไว้ในโฟลเดอร์เดียวกับ `app.py`
+
+## 3. รัน
+
+```bash
 python app.py
 ```
 
-เปิด `http://127.0.0.1:5000`
+จากนั้นเปิด:
+
+```text
+http://127.0.0.1:5000
+```
+
+## ความสามารถ
+
+- แสดง Site Base จาก Excel
+- รองรับข้อมูลจำนวนมากด้วย MarkerCluster
+- ค้นหา Site Code
+- ค้นหาชื่อสถานที่
+- ค้นหาตำบล / อำเภอ / จังหวัด
+- ค้นหาแล้วบินไปยังตำแหน่ง Site
+- คลิกหมุดเพื่อดูรายละเอียด
+- แสดง Latitude / Longitude
+- เปิดตำแหน่งใน Google Maps
+- ปุ่มตำแหน่งปัจจุบัน
+- Responsive สำหรับโทรศัพท์
+- ใช้ Flask เป็น Backend

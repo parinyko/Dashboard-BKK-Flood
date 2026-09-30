@@ -2,76 +2,75 @@
 <html lang="th">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bangkok Metropolitan Flood Analyzer — Job Monitor</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<title>Site Base Flood Operations Dashboard</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<style>
+:root{--nav:#10233f;--blue:#1769aa;--bg:#eef3f8;--line:#dce3ec;--text:#152238;--muted:#6b778c;--red:#dc2626;--orange:#f59e0b;--yellow:#eab308;--green:#16a34a}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;color:var(--text);background:var(--bg);overflow:hidden}
+#map{position:absolute;inset:0}
+.topbar{position:absolute;z-index:1200;left:0;right:0;top:0;height:62px;background:rgba(16,35,63,.97);color:#fff;display:flex;align-items:center;padding:0 18px;gap:14px;box-shadow:0 2px 12px #0003}.brand{font-weight:850;font-size:18px;white-space:nowrap}.brand small{font-size:11px;font-weight:500;opacity:.7;display:block}.top-search{flex:1;max-width:620px;display:flex;gap:7px}.top-search input{flex:1;border:0;border-radius:10px;padding:11px 13px;font-size:14px;outline:0}.btn{border:0;border-radius:9px;padding:10px 13px;cursor:pointer;font-weight:750;background:var(--blue);color:#fff}.btn.light{background:#fff;color:#20324e}.btn.green{background:#17803d}.btn.gray{background:#eef2f7;color:#24344e}
+.sidebar{position:absolute;z-index:1100;top:76px;left:14px;width:365px;max-height:calc(100vh - 92px);overflow:auto;background:#fff;border-radius:16px;box-shadow:0 8px 32px #0002;padding:14px}.section{border-bottom:1px solid var(--line);padding-bottom:13px;margin-bottom:13px}.section:last-child{border-bottom:0;margin-bottom:0}.section h3{margin:0 0 9px;font-size:13px}.field{margin-bottom:8px}.field label{font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px}.field input,.field select{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:#fff;font-size:13px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.card{padding:10px;border-radius:10px;background:#f6f8fb;border:1px solid #edf0f4}.card b{display:block;font-size:19px}.card span{font-size:10px;color:var(--muted)}.card.danger{background:#fff1f2}.card.warn{background:#fff8e7}.card.safe{background:#effcf3}.card.blue{background:#eff6ff}.checkrow{display:flex;gap:10px;flex-wrap:wrap;font-size:12px}.checkrow label{display:flex;gap:5px;align-items:center}.status{font-size:11px;color:var(--muted);line-height:1.4}.status.ok{color:#16784a}.status.err{color:#b42318}.legend div{font-size:11px;margin:5px 0}.sw{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:6px;vertical-align:-2px;border:2px solid #fff;box-shadow:0 0 0 1px #aaa}.site-pin{width:15px;height:15px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 5px #0007}.site-popup h3{margin:0 0 7px;font-size:14px}.site-popup table{font-size:11px;border-collapse:collapse}.site-popup td{padding:2px 4px 2px 0;vertical-align:top}.site-popup td:first-child{font-weight:750;color:#637089}.site-popup .tag{display:inline-block;padding:3px 7px;border-radius:99px;font-weight:750;margin-top:5px}.table-wrap{position:absolute;z-index:1050;right:14px;bottom:14px;width:min(760px,calc(100vw - 410px));max-height:40vh;background:#fff;border-radius:14px;box-shadow:0 8px 28px #0002;overflow:hidden}.table-head{padding:9px 12px;background:#f7f9fc;border-bottom:1px solid var(--line);font-size:12px;font-weight:800;display:flex;justify-content:space-between}.table-scroll{overflow:auto;max-height:calc(40vh - 42px)}table.data{border-collapse:collapse;width:100%;font-size:11px}table.data th,table.data td{padding:7px 8px;border-bottom:1px solid #edf0f4;text-align:left;white-space:nowrap}table.data th{position:sticky;top:0;background:#fff;z-index:2}.pill{border-radius:99px;padding:3px 7px;font-weight:800;font-size:10px}.p-severe{background:#fee2e2;color:#b91c1c}.p-moderate{background:#ffedd5;color:#c2410c}.p-low{background:#fef9c3;color:#a16207}.p-safe{background:#dcfce7;color:#166534}.p-unknown{background:#e5e7eb;color:#4b5563}.floating{position:absolute;z-index:1050;right:14px;top:76px;display:flex;gap:7px}.toast{position:absolute;z-index:2000;left:50%;top:74px;transform:translateX(-50%);background:#172033;color:#fff;border-radius:9px;padding:8px 13px;font-size:11px;display:none}
+@media(max-width:900px){.sidebar{width:330px}.table-wrap{left:14px;right:14px;width:auto;bottom:10px}.floating{right:10px;top:70px}.topbar{height:56px}.brand{display:none}.top-search{max-width:none}}
+@media(max-width:650px){.sidebar{top:66px;left:8px;width:calc(100vw - 16px);max-height:52vh}.table-wrap{display:none}.floating{top:auto;bottom:12px;right:8px}.topbar{padding:0 8px}.top-search input{font-size:12px}.btn{padding:9px 10px}}
+</style>
 </head>
 <body>
+<div id="map"></div>
 <header class="topbar">
-  <div><div class="brand">Bangkok Metropolitan Flood Analyzer</div><div class="subtitle">Job Monitor • Flood Analysis Ready</div></div>
-  <form class="upload" action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data">
-    <input type="file" name="file" accept=".xlsx,.xls" required><button class="btn primary">Upload Job Monitor</button>
-  </form>
+  <div class="brand">🌊 Site Base Operations<small>FloodBoard situational dashboard</small></div>
+  <div class="top-search"><input id="globalSearch" placeholder="ค้นหา Site Code / ชื่อสถานที่ / จังหวัด / อำเภอ"><button class="btn light" id="searchBtn">ค้นหา Site</button></div>
+  <button class="btn green" id="exportBtn">⬇ Export Excel</button>
 </header>
-<main class="page">
-{% with messages=get_flashed_messages(with_categories=true) %}
-{% for category,msg in messages %}<div class="flash {{category}}">{{msg}}</div>{% endfor %}
-{% endwith %}
-<section class="filter-card">
-<form method="get" class="filters">
-  <div class="field"><label>Sub System</label><select name="sub_system"><option value="">All Sub System</option>{% for x in sub_systems %}<option value="{{x}}" {% if filters.sub_system==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
-  <div class="field"><label>Zone</label><select name="zone"><option value="">All Zone</option>{% for x in zones %}<option value="{{x}}" {% if filters.zone==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
-  <div class="field"><label>Priority</label><select name="priority"><option value="">All Priority</option>{% for x in priorities %}<option value="{{x}}" {% if filters.priority==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
-  <div class="field"><label>Status</label><select name="status"><option value="">All Status</option>{% for x in statuses %}<option value="{{x}}" {% if filters.status==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
-  <div class="field"><label>Province</label><select name="province"><option value="">All Province</option>{% for x in provinces %}<option value="{{x}}" {% if filters.province==x %}selected{% endif %}>{{x}}</option>{% endfor %}</select></div>
-  <div class="field search"><label>Search Job / Site / Staff</label><input name="q" value="{{filters.q}}" placeholder="Job ID, Site Name, Job Title..."></div>
-  <div class="actions"><button class="btn primary">Apply Filter</button><a class="btn" href="{{url_for('index')}}">Clear</a></div>
-</form>
-</section>
-<section class="stats">
-<div class="stat"><span>Total Jobs</span><strong>{{"{:,}".format(counts.total or 0)}}</strong></div>
-<div class="stat critical"><span>Critical</span><strong>{{"{:,}".format(counts.critical or 0)}}</strong></div>
-<div class="stat major"><span>Major</span><strong>{{"{:,}".format(counts.major or 0)}}</strong></div>
-<div class="stat minor"><span>Minor</span><strong>{{"{:,}".format(counts.minor or 0)}}</strong></div>
-<div class="stat"><span>Mapped</span><strong>{{"{:,}".format(counts.mapped or 0)}}</strong></div>
-</section>
-<section class="content-grid">
-<div class="table-card">
-<div class="card-head"><div><h2>Job Monitor</h2><span>{{"{:,}".format(total)}} รายการ</span></div></div>
-<div class="table-wrap"><table><thead><tr>
-<th>Job ID</th><th>Sub System</th><th>Zone</th><th>Priority</th><th>Status</th><th>Province</th><th>Site Name</th><th>Coordinates</th><th></th>
-</tr></thead><tbody>
-{% for j in jobs %}<tr>
-<td><a class="jobid" href="{{url_for('job_detail',job_id=j['Job ID'])}}">{{j['Job ID']}}</a></td>
-<td>{{j['Sub System'] or '-'}}</td><td>{{j['Zone'] or '-'}}</td>
-<td><span class="pill {{(j['Priority'] or '')|lower}}">{{j['Priority'] or '-'}}</span></td>
-<td class="status-cell">{{j['Status'] or '-'}}</td><td>{{j['Province Name'] or '-'}}</td>
-<td class="site">{{j['Site Name'] or '-'}}</td>
-<td>{% if j['Job_Lat'] is not none and j['Job_Long'] is not none %}{{"%.5f"|format(j['Job_Lat'])}}, {{"%.5f"|format(j['Job_Long'])}}{% else %}-{% endif %}</td>
-<td><a class="details" href="{{url_for('job_detail',job_id=j['Job ID'])}}">Analysis →</a></td>
-</tr>{% else %}<tr><td colspan="9" class="empty">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</td></tr>{% endfor %}
-</tbody></table></div>
-<div class="pagination">
-{% if page>1 %}<a class="btn" href="{{url_for('index',page=page-1,**filters)}}">← Prev</a>{% endif %}
-<span>หน้า {{page}} / {{pages}}</span>
-{% if page<pages %}<a class="btn" href="{{url_for('index',page=page+1,**filters)}}">Next →</a>{% endif %}
-</div>
-</div>
-<div class="map-card"><div class="card-head"><div><h2>Job Map</h2><span>งานที่มีพิกัด สูงสุด 1,000 จุด</span></div></div><div id="map"></div></div>
-</section>
-</main>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<aside class="sidebar">
+  <div class="section"><h3>ตัวกรองพื้นที่</h3>
+    <div class="field"><label>จังหวัด</label><select id="province"><option value="">ทุกจังหวัด</option></select></div>
+    <div class="field"><label>อำเภอ</label><select id="amphur"><option value="">ทุกอำเภอ</option></select></div>
+    <div class="actions"><button class="btn" id="applyBtn">ใช้ตัวกรอง</button><button class="btn gray" id="resetBtn">ล้างตัวกรอง</button></div>
+  </div>
+  <div class="section"><h3>สรุป Site Base</h3><div class="cards">
+    <div class="card blue"><b id="sTotal">-</b><span>Site ตามตัวกรอง</span></div><div class="card danger"><b id="sFlood">-</b><span>อยู่ใกล้พื้นที่น้ำท่วม</span></div>
+    <div class="card danger"><b id="sSevere">-</b><span>น้ำลึก/เสี่ยง ≥ 70 cm</span></div><div class="card warn"><b id="sModerate">-</b><span>ระดับ 20–69 cm</span></div>
+    <div class="card safe"><b id="sLow">-</b><span>ระดับต่ำ/น้ำลด</span></div><div class="card"><b id="sSafe">-</b><span>ไม่พบถนนน้ำท่วมใกล้เคียง</span></div>
+  </div></div>
+  <div class="section"><h3>การแสดงผล</h3><div class="checkrow">
+    <label><input type="checkbox" id="siteToggle" checked> Site Base</label><label><input type="checkbox" id="floodToggle" checked> ถนนน้ำท่วม</label><label><input type="checkbox" id="tableToggle" checked> ตาราง Site</label>
+  </div><div style="margin-top:9px" class="legend"><div><span class="sw" style="background:#dc2626"></span>น้ำลึก/เสี่ยง ≥70 cm</div><div><span class="sw" style="background:#f59e0b"></span>20–69 cm</div><div><span class="sw" style="background:#eab308"></span>ระดับต่ำ/น้ำลด</div><div><span class="sw" style="background:#16a34a"></span>ไม่พบถนนน้ำท่วมใกล้เคียง</div></div></div>
+  <div class="section"><div class="status" id="status">กำลังเริ่มระบบ…</div><div class="status" style="margin-top:6px">* สถานะของ Site คำนวณจากความใกล้กับถนนที่ FloodBoard รายงาน ไม่ใช่แบบจำลองระดับน้ำท่วมเชิงไฮดรอลิก</div></div>
+</aside>
+<div class="floating"><button class="btn gray" id="locBtn">📍 ตำแหน่งฉัน</button><button class="btn gray" id="fitBtn">⌖ ดู Site ทั้งหมด</button></div>
+<div class="table-wrap" id="tableWrap"><div class="table-head"><span>รายการ Site ที่ตรงตัวกรอง</span><span id="tableCount">-</span></div><div class="table-scroll"><table class="data"><thead><tr><th>Site</th><th>สถานที่</th><th>อำเภอ</th><th>จังหวัด</th><th>สถานะน้ำ</th><th>ลึก (cm)</th></tr></thead><tbody id="siteTable"></tbody></table></div></div>
+<div class="toast" id="toast"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
-const map=L.map('map').setView([13.7563,100.5018],10);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-fetch('{{url_for("api_jobs")}}').then(r=>r.json()).then(rows=>{
- const bounds=[];
- rows.forEach(j=>{
-   const m=L.circleMarker([j.lat,j.lng],{radius:6,weight:1});
-   m.bindPopup('<b>'+j.job_id+'</b><br>Priority: '+(j.priority||'-')+'<br>Status: '+(j.status||'-')+'<br>Sub System: '+(j.sub_system||'-')+'<br>Zone: '+(j.zone||'-')+'<br><a href="/job/'+encodeURIComponent(j.job_id)+'">Open Analysis</a>').addTo(map);
-   bounds.push([j.lat,j.lng]);
- });
- if(bounds.length) map.fitBounds(bounds,{padding:[20,20]});
-});
+const map=L.map('map',{preferCanvas:true,zoomControl:false}).setView([13.7563,100.5018],7); L.control.zoom({position:'bottomright'}).addTo(map);
+const street=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}).addTo(map);
+const satellite=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles © Esri'});
+L.control.layers({'ถนน':street,'ดาวเทียม':satellite},null,{collapsed:true,position:'bottomright'}).addTo(map);
+const siteLayer=L.markerClusterGroup({chunkedLoading:true,maxClusterRadius:42,disableClusteringAtZoom:14});
+const floodLayer=L.geoJSON(null,{style:f=>({color:floodColor(f),weight:4,opacity:.78})}); map.addLayer(siteLayer); map.addLayer(floodLayer);
+let lastKey='',loading=false,siteData=[],userMarker=null;
+const statusNames={severe:'น้ำลึก/เสี่ยง',moderate:'น้ำ 20–69 cm',low:'ระดับต่ำ/น้ำลด',safe:'ไม่พบถนนน้ำท่วมใกล้เคียง',unknown:'ไม่ทราบ'};
+function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function floodColor(f){const p=f?.properties||{};const text=JSON.stringify(p).toLowerCase();const n=Number(p.depth??p.depth_cm??p.max_depth??p.water_depth??0);if(n>=70||/not.?passable|deep|70/.test(text))return '#dc2626';if(n>=20||/risky|unconfirmed|small.?car/.test(text))return '#f59e0b';return '#eab308'}
+function markerColor(s){return ({severe:'#dc2626',moderate:'#f59e0b',low:'#eab308',safe:'#16a34a',unknown:'#64748b'})[s.flood_status]||'#64748b'}
+function pin(s){return L.divIcon({className:'',html:`<div class="site-pin" style="background:${markerColor(s)}"></div>`,iconSize:[15,15],iconAnchor:[7,7]})}
+function popup(s){const st=s.flood_status||'unknown';const tag=`<span class="tag p-${st}">${esc(statusNames[st]||st)}${s.water_depth_cm!=null?' · '+Number(s.water_depth_cm).toFixed(0)+' cm':''}</span>`;return `<div class="site-popup"><h3>📍 ${esc(s.site_code)}</h3><table><tr><td>ชื่อ</td><td>${esc(s.location_name)}</td></tr><tr><td>ตำบล</td><td>${esc(s.tumbol)}</td></tr><tr><td>อำเภอ</td><td>${esc(s.amphur)}</td></tr><tr><td>จังหวัด</td><td>${esc(s.province)}</td></tr><tr><td>พิกัด</td><td>${Number(s.latitude).toFixed(6)}, ${Number(s.longitude).toFixed(6)}</td></tr><tr><td>ห่างถนน</td><td>${s.flood_distance_m!=null?Number(s.flood_distance_m).toFixed(0)+' m':'-'}</td></tr></table>${tag}<div style="margin-top:7px"><a target="_blank" href="https://www.google.com/maps?q=${s.latitude},${s.longitude}">เปิด Google Maps</a></div></div>`}
+function showToast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';clearTimeout(showToast.t);showToast.t=setTimeout(()=>e.style.display='none',2600)}
+function params(){const p=new URLSearchParams();const q=document.getElementById('globalSearch').value.trim();const prov=document.getElementById('province').value;const amp=document.getElementById('amphur').value;if(q)p.set('q',q);if(prov)p.set('province',prov);if(amp)p.set('amphur',amp);return p}
+async function loadFilters(province=''){const p=new URLSearchParams();if(province)p.set('province',province);const d=await fetch('/api/filters?'+p).then(r=>r.json());const ps=document.getElementById('province');const old=ps.value;ps.innerHTML='<option value="">ทุกจังหวัด</option>'+d.provinces.map(x=>`<option>${esc(x)}</option>`).join('');if(d.provinces.includes(old))ps.value=old;const as=document.getElementById('amphur');as.innerHTML='<option value="">ทุกอำเภอ</option>'+d.amphurs.map(x=>`<option>${esc(x)}</option>`).join('')}
+async function refreshAmphur(){const prov=document.getElementById('province').value;await loadFilters(prov);document.getElementById('amphur').value=''}
+function renderTable(rows){const body=document.getElementById('siteTable');body.innerHTML=rows.slice(0,250).map(s=>`<tr data-code="${esc(s.site_code)}"><td><b>${esc(s.site_code)}</b></td><td>${esc(s.location_name)}</td><td>${esc(s.amphur)}</td><td>${esc(s.province)}</td><td><span class="pill p-${s.flood_status}">${esc(statusNames[s.flood_status]||s.flood_status)}</span></td><td>${s.water_depth_cm==null?'-':Number(s.water_depth_cm).toFixed(0)}</td></tr>`).join('');document.getElementById('tableCount').textContent=rows.length.toLocaleString()+' รายการ'+(rows.length>250?' (แสดงตาราง 250 รายการแรก)':'');body.querySelectorAll('tr').forEach(tr=>tr.onclick=()=>{const s=siteData.find(x=>x.site_code===tr.dataset.code);if(s){map.setView([s.latitude,s.longitude],16);siteLayer.eachLayer(m=>{if(m.options.title===s.site_code)m.openPopup()})}})}
+function setSummary(d){for(const [id,key] of [['sTotal','total'],['sFlood','flooded'],['sSevere','severe'],['sModerate','moderate'],['sLow','low'],['sSafe','safe']])document.getElementById(id).textContent=(d[key]??0).toLocaleString()}
+async function loadSites(){if(loading)return;loading=true;const p=params();p.set('with_flood','1');p.set('limit','5000');const b=map.getBounds();p.set('south',b.getSouth());p.set('west',b.getWest());p.set('north',b.getNorth());p.set('east',b.getEast());const key=p.toString();if(key===lastKey){loading=false;return}lastKey=key;document.getElementById('status').textContent='กำลังคำนวณ Site และสถานะน้ำ…';try{const d=await fetch('/api/sites?'+p).then(r=>r.json());siteData=d.sites||[];siteLayer.clearLayers();siteData.forEach(s=>{const m=L.marker([s.latitude,s.longitude],{icon:pin(s),title:s.site_code});m.bindPopup(popup(s));siteLayer.addLayer(m)});renderTable(siteData);document.getElementById('status').className='status ok';document.getElementById('status').textContent=`แสดง ${d.count.toLocaleString()} Site ในกรอบแผนที่`;await loadSummary();}catch(e){document.getElementById('status').className='status err';document.getElementById('status').textContent='โหลดข้อมูลไม่สำเร็จ: '+e.message}finally{loading=false}}
+async function loadSummary(){const p=params();try{const d=await fetch('/api/dashboard-summary?'+p).then(r=>r.json());setSummary(d)}catch(e){}}
+async function loadFlood(){try{const r=await fetch('/api/floodboard/roads');if(!r.ok)throw new Error('HTTP '+r.status);const gj=await r.json();floodLayer.addData(gj)}catch(e){showToast('โหลดชั้นถนนน้ำท่วมไม่สำเร็จ');console.error(e)}}
+async function searchSite(){const q=document.getElementById('globalSearch').value.trim();if(!q)return loadSites();const p=new URLSearchParams({q,limit:'20',with_flood:'1'});const d=await fetch('/api/sites?'+p).then(r=>r.json());if(!d.sites.length){showToast('ไม่พบ Site ที่ค้นหา');return}const s=d.sites[0];map.setView([s.latitude,s.longitude],17);lastKey='';await loadSites();const target=siteData.find(x=>x.site_code===s.site_code);if(target){const layers=[];siteLayer.eachLayer(m=>{if(m.options.title===target.site_code)layers.push(m)});if(layers[0])layers[0].openPopup()}showToast(`พบ ${d.sites.length.toLocaleString()} Site — Zoom ไปยัง ${s.site_code}`)}
+document.getElementById('province').onchange=refreshAmphur;document.getElementById('applyBtn').onclick=()=>{lastKey='';loadSites()};document.getElementById('resetBtn').onclick=async()=>{document.getElementById('globalSearch').value='';document.getElementById('province').value='';await loadFilters();document.getElementById('amphur').value='';lastKey='';loadSites()};document.getElementById('searchBtn').onclick=searchSite;document.getElementById('globalSearch').onkeydown=e=>{if(e.key==='Enter')searchSite()};
+document.getElementById('siteToggle').onchange=e=>e.target.checked?map.addLayer(siteLayer):map.removeLayer(siteLayer);document.getElementById('floodToggle').onchange=e=>e.target.checked?map.addLayer(floodLayer):map.removeLayer(floodLayer);document.getElementById('tableToggle').onchange=e=>document.getElementById('tableWrap').style.display=e.target.checked?'block':'none';document.getElementById('fitBtn').onclick=()=>map.fitBounds(siteLayer.getBounds(),{padding:[30,30]});document.getElementById('locBtn').onclick=()=>map.locate({setView:true,maxZoom:15});map.on('locationfound',e=>{if(userMarker)userMarker.remove();userMarker=L.marker(e.latlng).addTo(map).bindPopup('📍 ตำแหน่งของคุณ').openPopup()});map.on('locationerror',()=>showToast('ไม่สามารถอ่านตำแหน่งได้'));
+document.getElementById('exportBtn').onclick=()=>{const p=params();window.location='/api/export.xlsx?'+p.toString();showToast('กำลังสร้าง Excel…')};
+map.on('moveend',()=>{if(map.getZoom()>=9){lastKey='';loadSites()}});
+(async()=>{await loadFilters();await loadSites();loadFlood()})();
 </script>
 </body></html>

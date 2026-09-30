@@ -1,7 +1,5 @@
-Flask>=3.0,<4.0
-pandas>=2.2,<3.0
-openpyxl>=3.1,<4.0
-xlrd>=2.0,<3.0
-Werkzeug>=3.0,<4.0
-requests>=2.32,<3.0
-python-dotenv>=1.0,<2.0
+Flask>=3.0,<4
+pandas>=2.0
+openpyxl>=3.1
+requests>=2.31
+shapely>=2.0

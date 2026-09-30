@@ -1,370 +1,329 @@
-
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
-import sqlite3, os, math, re
-from pathlib import Path
-from werkzeug.utils import secure_filename
-import pandas as pd
+from flask import Flask, render_template, request, jsonify, send_file, Response
+import sqlite3
+import os
+import time
+import json
+import tempfile
+from io import BytesIO
 import requests
-from datetime import datetime, timezone
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "data" / "bangkok_metropolitan_flood_analyzer.db"
-UPLOAD_DIR = BASE_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 
 try:
-    from dotenv import load_dotenv
-    load_dotenv(BASE_DIR / ".env")
+    from shapely.geometry import Point, shape
+    from shapely.strtree import STRtree
 except Exception:
-    pass
+    Point = shape = STRtree = None
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "sites.db")
+FLOODBOARD_BASE = "https://www.floodboard.org"
+FLOODBOARD_ROADS = f"{FLOODBOARD_BASE}/api/export/roads.geojson"
+FLOODBOARD_REPORTS = f"{FLOODBOARD_BASE}/api/export/reports.csv"
+FLOODBOARD_STATS = f"{FLOODBOARD_BASE}/api/stats"
+FLOODBOARD_FEED = f"{FLOODBOARD_BASE}/api/feed"
+CACHE_DIR = os.path.join(BASE_DIR, "data", "cache")
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "bangkok-metropolitan-flood-analyzer")
-HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT_SECONDS", "12"))
+app.config["JSON_AS_ASCII"] = False
 
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
-GOOGLE_ELEVATION_URL = os.getenv(
-    "GOOGLE_ELEVATION_URL",
-    "https://maps.googleapis.com/maps/api/elevation/json"
-)
-GOOGLE_ROUTES_URL = os.getenv(
-    "GOOGLE_ROUTES_URL",
-    "https://routes.googleapis.com/directions/v2:computeRoutes"
-)
+_flood_index = None
+_flood_index_loaded_at = 0
+_flood_features = []
 
-FLOOD_BANGKOK_API_URL = os.getenv("FLOOD_BANGKOK_API_URL", "")
-FLOOD_BANGKOK_API_TOKEN = os.getenv("FLOOD_BANGKOK_API_TOKEN", "")
-TRAFFY_API_URL = os.getenv("TRAFFY_API_URL", "")
-TRAFFY_API_TOKEN = os.getenv("TRAFFY_API_TOKEN", "")
 
-CAR_PASS_CM = float(os.getenv("CAR_PASS_CM", "10"))
-CAR_CAUTION_CM = float(os.getenv("CAR_CAUTION_CM", "20"))
-CAR_AVOID_CM = float(os.getenv("CAR_AVOID_CM", "24"))
-CAR_BLOCK_CM = float(os.getenv("CAR_BLOCK_CM", "25"))
-NEARBY_FLOOD_KM = float(os.getenv("NEARBY_FLOOD_KM", "3"))
-NEARBY_TRAFFY_KM = float(os.getenv("NEARBY_TRAFFY_KM", "2"))
-
-def get_db():
+def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-def distinct_values(column):
-    conn = get_db()
-    sql = f'''SELECT DISTINCT "{column}" AS value
-              FROM job_monitor
-              WHERE "{column}" IS NOT NULL AND TRIM("{column}") <> ''
-              ORDER BY "{column}"'''
-    rows = conn.execute(sql).fetchall()
-    conn.close()
-    return [r["value"] for r in rows]
 
-def build_filters():
-    fields = {
-        "sub_system": 'jm."Sub System"',
-        "zone": 'jm."Zone"',
-        "priority": 'jm."Priority"',
-        "status": 'jm."Status"',
-        "province": 'jm."Province Name"',
-    }
-    where, params = [], []
-    for key, col in fields.items():
-        value = request.args.get(key, "").strip()
-        if value:
-            where.append(f"{col} = ?")
-            params.append(value)
-    q = request.args.get("q", "").strip()
-    if q:
-        where.append('''(
-            jm."Job ID" LIKE ? OR jm."Site Name" LIKE ? OR
-            jm."Job Title" LIKE ? OR jm."Assign to" LIKE ?
-        )''')
-        like = f"%{q}%"
-        params.extend([like] * 4)
-    return (" WHERE " + " AND ".join(where)) if where else "", params
+def row_to_dict(row):
+    return dict(row)
 
-def haversine_km(lat1, lon1, lat2, lon2):
-    r = 6371.0088
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2-lat1), math.radians(lon2-lon1)
-    a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
-    return 2*r*math.asin(math.sqrt(a))
 
-def safe_json(resp):
-    try:
-        return resp.json()
-    except Exception:
-        return {"status": "HTTP_ERROR", "http_status": resp.status_code, "text": resp.text[:1000]}
+def clean(v):
+    return "" if v is None else str(v).strip()
 
-def auth_headers(token):
-    h = {"Accept": "application/json"}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
 
-def google_elevation(lat, lng):
-    if not GOOGLE_MAPS_API_KEY:
-        return {"available": False, "source": "Google Elevation API",
-                "reason": "GOOGLE_MAPS_API_KEY is not configured"}
-    try:
-        r = requests.get(GOOGLE_ELEVATION_URL,
-            params={"locations": f"{lat},{lng}", "key": GOOGLE_MAPS_API_KEY},
-            timeout=HTTP_TIMEOUT)
-        data = safe_json(r)
-        if r.ok and data.get("status") == "OK" and data.get("results"):
-            x = data["results"][0]
-            return {"available": True, "source": "Google Elevation API",
-                    "elevation_m": x.get("elevation"),
-                    "resolution_m": x.get("resolution")}
-        return {"available": False, "source": "Google Elevation API",
-                "reason": data.get("error_message") or data.get("status") or f"HTTP {r.status_code}"}
-    except Exception as e:
-        return {"available": False, "source": "Google Elevation API", "reason": str(e)}
-
-def google_route(origin_lat, origin_lng, dest_lat, dest_lng):
-    if not GOOGLE_MAPS_API_KEY:
-        return {"available": False, "source": "Google Routes API",
-                "reason": "GOOGLE_MAPS_API_KEY is not configured"}
-    body = {
-        "origin": {"location": {"latLng": {"latitude": origin_lat, "longitude": origin_lng}}},
-        "destination": {"location": {"latLng": {"latitude": dest_lat, "longitude": dest_lng}}},
-        "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_AWARE",
-        "units": "METRIC"
-    }
-    fields = "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline"
-    try:
-        r = requests.post(GOOGLE_ROUTES_URL, headers={
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-            "X-Goog-FieldMask": fields
-        }, json=body, timeout=HTTP_TIMEOUT)
-        data = safe_json(r)
-        if not r.ok or not data.get("routes"):
-            err = data.get("error", {})
-            return {"available": False, "source": "Google Routes API",
-                    "reason": err.get("message") if isinstance(err, dict) else f"HTTP {r.status_code}"}
-        x = data["routes"][0]
-        return {"available": True, "source": "Google Routes API",
-                "distance_m": x.get("distanceMeters"),
-                "duration": x.get("duration"),
-                "polyline": x.get("polyline", {}).get("encodedPolyline")}
-    except Exception as e:
-        return {"available": False, "source": "Google Routes API", "reason": str(e)}
-
-def external_api(url, token, lat, lng, radius_km, name):
-    if not url:
-        return {"available": False, "source": name, "reason": f"{name} endpoint is not configured"}
-    try:
-        params = {"lat": lat, "lng": lng, "latitude": lat, "longitude": lng,
-                  "radius_km": radius_km, "radius": radius_km * 1000}
-        r = requests.get(url, params=params, headers=auth_headers(token), timeout=HTTP_TIMEOUT)
-        data = safe_json(r)
-        if not r.ok:
-            return {"available": False, "source": name, "reason": f"HTTP {r.status_code}", "raw": data}
-        return {"available": True, "source": name, "raw": data}
-    except Exception as e:
-        return {"available": False, "source": name, "reason": str(e)}
-
-def list_candidates(raw, keys):
-    if isinstance(raw, list):
-        return raw
-    if isinstance(raw, dict):
-        for k in keys:
-            if isinstance(raw.get(k), list):
-                return raw[k]
-    return []
-
-def normalize_flood(result, lat, lng):
-    if not result.get("available"):
-        return []
-    out = []
-    for item in list_candidates(result.get("raw"), ["stations","data","results","items","features"]):
-        if not isinstance(item, dict): continue
-        prop = item.get("properties") if isinstance(item.get("properties"), dict) else {}
-        s = {**item, **prop}
-        la, lo = s.get("lat", s.get("latitude")), s.get("lng", s.get("lon", s.get("longitude")))
-        try: la, lo = float(la), float(lo)
-        except Exception: continue
-        water = None
-        for k in ["water_level_cm","waterLevelCm","water_level","waterLevel","level_cm","level","height_cm"]:
-            if s.get(k) is not None:
-                try: water = float(s[k]); break
-                except Exception: pass
-        if water is None: continue
-        out.append({
-            "name": s.get("name") or s.get("station_name") or s.get("stationName") or "Flood station",
-            "lat": la, "lng": lo, "distance_km": round(haversine_km(lat,lng,la,lo),3),
-            "water_level_cm": water,
-            "updated_at": s.get("updated_at") or s.get("updatedAt") or s.get("timestamp")
-        })
-    return sorted(out, key=lambda x:x["distance_km"])
-
-def normalize_traffy(result, lat, lng):
-    if not result.get("available"):
-        return []
-    out = []
-    for item in list_candidates(result.get("raw"), ["tickets","data","results","items","features"]):
-        if not isinstance(item, dict): continue
-        prop = item.get("properties") if isinstance(item.get("properties"), dict) else {}
-        s = {**item, **prop}
-        la, lo = s.get("lat", s.get("latitude")), s.get("lng", s.get("lon", s.get("longitude")))
-        try: la, lo = float(la), float(lo)
-        except Exception: continue
-        title = s.get("problem") or s.get("title") or s.get("subject") or s.get("description") or ""
-        cat = s.get("type") or s.get("category") or ""
-        text = f"{title} {cat}".lower()
-        flood_related = any(k in text for k in ["น้ำท่วม","น้ำขัง","ท่วมขัง","ระบายน้ำ","flood","water"])
-        out.append({
-            "ticket_id": s.get("ticketID") or s.get("ticket_id") or s.get("id"),
-            "title": title[:180], "category": cat, "status": s.get("status"),
-            "lat": la, "lng": lo, "distance_km": round(haversine_km(lat,lng,la,lo),3),
-            "created_at": s.get("timestamp") or s.get("created_at") or s.get("createdAt"),
-            "flood_related": flood_related
-        })
-    return sorted(out, key=lambda x:x["distance_km"])
-
-def classify(max_water, traffy, elevation):
-    evidence, score = [], 0
-    if max_water is not None:
-        if max_water >= CAR_BLOCK_CM:
-            score += 80
-        elif max_water > CAR_CAUTION_CM:
-            score += 55
-        elif max_water > CAR_PASS_CM:
-            score += 30
-        evidence.append(f"ระดับน้ำ {max_water:.1f} ซม.")
-    flood_reports = [x for x in traffy if x["flood_related"]]
-    if flood_reports:
-        score += min(30, len(flood_reports)*10)
-        evidence.append(f"Traffy พบรายงานเกี่ยวกับน้ำ {len(flood_reports)} รายการ")
-    if elevation is not None:
-        evidence.append(f"Elevation {elevation:.2f} ม.")
-    if max_water is None and not flood_reports:
-        return {"level":"UNKNOWN","label":"ข้อมูลไม่เพียงพอ","score":None,"evidence":evidence}
-    level = "HIGH" if score >= 70 else "MEDIUM" if score >= 35 else "LOW"
-    return {"level":level,"label":{"HIGH":"เสี่ยงสูง","MEDIUM":"เสี่ยงปานกลาง","LOW":"เสี่ยงต่ำ"}[level],
-            "score":score,"evidence":evidence}
-
-def small_car(max_water, traffy, risk_level):
-    if max_water is not None:
-        if max_water >= CAR_BLOCK_CM:
-            return {"decision":"ไม่ควรผ่าน","reason":f"ระดับน้ำ {max_water:.1f} ซม. ≥ {CAR_BLOCK_CM:.0f} ซม."}
-        if max_water > CAR_AVOID_CM:
-            return {"decision":"หลีกเลี่ยง","reason":f"ระดับน้ำ {max_water:.1f} ซม. > {CAR_AVOID_CM:.0f} ซม."}
-        if max_water > CAR_PASS_CM:
-            return {"decision":"ต้องระวัง","reason":f"ระดับน้ำ {max_water:.1f} ซม. > {CAR_PASS_CM:.0f} ซม."}
-        return {"decision":"ผ่านได้ตามข้อมูลน้ำ","reason":f"ระดับน้ำ {max_water:.1f} ซม. ≤ {CAR_PASS_CM:.0f} ซม."}
-    if risk_level == "HIGH":
-        return {"decision":"หลีกเลี่ยง","reason":"มีหลักฐานความเสี่ยงสูง แต่ไม่มีระดับน้ำยืนยันโดยตรง"}
-    if risk_level == "MEDIUM" or any(x["flood_related"] for x in traffy):
-        return {"decision":"ต้องระวัง","reason":"พบหลักฐานน้ำท่วมใกล้จุด แต่ยังไม่มีระดับน้ำยืนยัน"}
-    return {"decision":"ยังสรุปไม่ได้","reason":"ไม่มีข้อมูลน้ำที่เพียงพอ"}
-
-def analyze_job(job, dest_lat=None, dest_lng=None):
-    lat, lng = job["Job_Lat"], job["Job_Long"]
-    if lat is None or lng is None:
-        return {"ok":False,"error":"Job นี้ไม่มีพิกัด","job":dict(job)}
-    elevation = google_elevation(lat,lng)
-    flood_api = external_api(FLOOD_BANGKOK_API_URL,FLOOD_BANGKOK_API_TOKEN,lat,lng,NEARBY_FLOOD_KM,"Flood Bangkok")
-    traffy_api = external_api(TRAFFY_API_URL,TRAFFY_API_TOKEN,lat,lng,NEARBY_TRAFFY_KM,"Traffy Fondue")
-    stations = normalize_flood(flood_api,lat,lng)
-    reports = normalize_traffy(traffy_api,lat,lng)
-    max_water = max([x["water_level_cm"] for x in stations if x["distance_km"] <= NEARBY_FLOOD_KM], default=None)
-    if dest_lat is not None and dest_lng is not None:
-        route = google_route(lat,lng,dest_lat,dest_lng)
-    else:
-        route = {"available":False,"source":"Google Routes API","reason":"ยังไม่ได้ระบุปลายทาง"}
-    risk = classify(max_water,reports,elevation.get("elevation_m") if elevation.get("available") else None)
-    car = small_car(max_water,reports,risk["level"])
-    sources = [
-        {"name":"Flood Bangkok","available":flood_api["available"],"reason":flood_api.get("reason")},
-        {"name":"Google Elevation","available":elevation["available"],"reason":elevation.get("reason")},
-        {"name":"Traffy Fondue","available":traffy_api["available"],"reason":traffy_api.get("reason")},
-        {"name":"Google Routes","available":route["available"],"reason":route.get("reason")}
+def normalize_depth(props):
+    """Return best-known water depth in cm, or None."""
+    if not isinstance(props, dict):
+        return None
+    keys = [
+        "depth", "depth_cm", "water_depth", "max_depth", "depthCm",
+        "waterDepth", "maxDepth", "flood_depth", "floodDepth", "cm"
     ]
-    return {"ok":True,"job":dict(job),"generated_at":datetime.now(timezone.utc).isoformat(),
-            "elevation":elevation,"flood":{"stations":stations,"max_water_cm":max_water},
-            "traffy":{"reports":reports},"route":route,"risk":risk,"small_car":car,"sources":sources}
+    for key in keys:
+        value = props.get(key)
+        try:
+            if value is not None and str(value).strip() != "":
+                return float(str(value).replace(",", "").strip())
+        except Exception:
+            pass
+    text = json.dumps(props, ensure_ascii=False).lower()
+    import re
+    matches = re.findall(r"(?:depth|water|น้ำ)[^0-9]{0,20}(\d+(?:\.\d+)?)\s*(?:cm|เซนติเมตร)?", text)
+    if matches:
+        try:
+            return float(matches[0])
+        except Exception:
+            pass
+    return None
 
-@app.route("/")
-def index():
-    clause,params=build_filters()
-    page=max(1,request.args.get("page",1,type=int)); per_page=25; offset=(page-1)*per_page
-    conn=get_db()
-    total=conn.execute(f"SELECT COUNT(*) FROM job_monitor jm{clause}",params).fetchone()[0]
-    jobs=conn.execute(f'''SELECT jm.* FROM job_monitor jm {clause}
-        ORDER BY COALESCE(jm."Create Time_dt",jm."Create Time") DESC LIMIT ? OFFSET ?''',
-        params+[per_page,offset]).fetchall()
-    counts=conn.execute(f'''SELECT COUNT(*) total,
-        SUM(CASE WHEN "Priority"='Critical' THEN 1 ELSE 0 END) critical,
-        SUM(CASE WHEN "Priority"='Major' THEN 1 ELSE 0 END) major,
-        SUM(CASE WHEN "Priority"='Minor' THEN 1 ELSE 0 END) minor,
-        SUM(CASE WHEN "Has_Coordinate"=1 THEN 1 ELSE 0 END) mapped
-        FROM job_monitor jm {clause}''',params).fetchone()
-    conn.close()
-    filters={k:request.args.get(k,"") for k in ["sub_system","zone","priority","status","province","q"]}
-    pages=max(1,(total+per_page-1)//per_page)
-    return render_template("index.html",jobs=jobs,filters=filters,
-        sub_systems=distinct_values("Sub System"),zones=distinct_values("Zone"),
-        priorities=distinct_values("Priority"),statuses=distinct_values("Status"),
-        provinces=distinct_values("Province Name"),counts=counts,page=page,pages=pages,total=total)
 
-@app.route("/job/<path:job_id>")
-def job_detail(job_id):
-    conn=get_db(); job=conn.execute('SELECT * FROM job_monitor WHERE "Job ID"=?',(job_id,)).fetchone(); conn.close()
-    if not job:return "Job not found",404
-    return render_template("job_detail.html",job=job)
+def flood_status_from_properties(props):
+    depth = normalize_depth(props)
+    text = json.dumps(props or {}, ensure_ascii=False).lower()
+    if depth is not None:
+        if depth >= 70:
+            return "severe", depth
+        if depth >= 20:
+            return "moderate", depth
+        return "low", depth
+    if any(x in text for x in ["not passable", "deep", "70+", "70 cm", "danger"]):
+        return "severe", None
+    if any(x in text for x in ["risky", "unconfirmed", "small car", "passable"]):
+        return "moderate", None
+    if any(x in text for x in ["receded", "water gone"]):
+        return "low", 0
+    return "unknown", None
 
-@app.route("/api/job/<path:job_id>/analysis")
-def api_job_analysis(job_id):
-    conn=get_db(); job=conn.execute('SELECT * FROM job_monitor WHERE "Job ID"=?',(job_id,)).fetchone(); conn.close()
-    if not job:return jsonify({"ok":False,"error":"Job not found"}),404
-    return jsonify(analyze_job(job,request.args.get("dest_lat",type=float),request.args.get("dest_lng",type=float)))
 
-@app.route("/api/jobs")
-def api_jobs():
-    clause,params=build_filters(); conn=get_db()
-    sql=f'''SELECT "Job ID" job_id,"Job_Lat" lat,"Job_Long" lng,"Priority" priority,
-        "Status" status,"Sub System" sub_system,"Zone" zone,"Site Name" site_name
-        FROM job_monitor jm {clause}
-        {'AND' if clause else 'WHERE'} "Job_Lat" IS NOT NULL AND "Job_Long" IS NOT NULL
-        ORDER BY "Create Time_dt" DESC LIMIT 1000'''
-    rows=conn.execute(sql,params).fetchall(); conn.close(); return jsonify([dict(r) for r in rows])
+def cached_get(url, filename, ttl=60):
+    path = os.path.join(CACHE_DIR, filename)
+    if os.path.exists(path) and time.time() - os.path.getmtime(path) < ttl:
+        with open(path, "rb") as f:
+            return f.read(), None
+    r = requests.get(url, timeout=45, headers={"User-Agent": "FloodSiteBaseDashboard/2.0"})
+    r.raise_for_status()
+    content = r.content
+    with open(path, "wb") as f:
+        f.write(content)
+    return content, r.headers.get("Content-Type")
 
-@app.route("/upload",methods=["POST"])
-def upload():
-    file=request.files.get("file")
-    if not file or not file.filename:
-        flash("กรุณาเลือกไฟล์ Job Monitor ก่อน","error"); return redirect(url_for("index"))
-    if Path(file.filename).suffix.lower() not in {".xlsx",".xls"}:
-        flash("รองรับเฉพาะไฟล์ Excel","error"); return redirect(url_for("index"))
-    saved=UPLOAD_DIR/secure_filename(file.filename); file.save(saved)
+
+def load_flood_index(force=False):
+    """Build a spatial index from FloodBoard roads. Site coordinates are WGS84.
+    A small degree buffer is used for proximity classification; this is intended
+    as an operational indicator, not a hydrological inundation model.
+    """
+    global _flood_index, _flood_index_loaded_at, _flood_features
+    if Point is None or STRtree is None:
+        return None, []
+    if _flood_index is not None and not force and time.time() - _flood_index_loaded_at < 60:
+        return _flood_index, _flood_features
     try:
-        df=pd.read_excel(saved); required=["Job ID","Sub System","Priority","Zone"]
-        missing=[c for c in required if c not in df.columns]
-        if missing: raise ValueError("ไม่พบคอลัมน์: "+", ".join(missing))
-        for c in required: df[c]=df[c].astype("string").str.strip()
-        def coord(text,idx):
-            if pd.isna(text):return None
-            m=re.search(r"\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)",str(text))
-            return float(m.group(idx)) if m else None
-        if "Job_Lat" not in df.columns:
-            s=df["Job Title"] if "Job Title" in df.columns else pd.Series([None]*len(df)); df["Job_Lat"]=s.apply(lambda x:coord(x,1))
-        if "Job_Long" not in df.columns:
-            s=df["Job Title"] if "Job Title" in df.columns else pd.Series([None]*len(df)); df["Job_Long"]=s.apply(lambda x:coord(x,2))
-        for c in ["Create Time_dt","Est Time_dt","Dispatch NextTime_dt"]:
-            if c not in df.columns:
-                b=c.replace("_dt","")
-                if b in df.columns:df[c]=pd.to_datetime(df[b],errors="coerce")
-        if "Has_Coordinate" not in df.columns:df["Has_Coordinate"]=df["Job_Lat"].notna()&df["Job_Long"].notna()
-        conn=get_db(); df.to_sql("job_monitor",conn,if_exists="replace",index=False)
-        for col,idx in [("Job ID","idx_job_monitor_jobid"),("Sub System","idx_job_monitor_subsystem"),
-                        ("Zone","idx_job_monitor_zone"),("Priority","idx_job_monitor_priority"),("Status","idx_job_monitor_status")]:
-            conn.execute(f'CREATE INDEX IF NOT EXISTS {idx} ON job_monitor("{col}")')
-        conn.commit();conn.close();flash(f"Upload สำเร็จ: {len(df):,} งาน","success")
-    except Exception as e:flash(f"Upload ไม่สำเร็จ: {e}","error")
-    return redirect(url_for("index"))
+        content, _ = cached_get(FLOODBOARD_ROADS, "roads.geojson", ttl=60)
+        gj = json.loads(content.decode("utf-8"))
+        geoms, feats = [], []
+        for f in gj.get("features", []):
+            try:
+                g = shape(f.get("geometry"))
+                if not g.is_empty:
+                    geoms.append(g)
+                    feats.append(f)
+            except Exception:
+                continue
+        _flood_features = feats
+        _flood_index = STRtree(geoms) if geoms else None
+        _flood_index_loaded_at = time.time()
+        return _flood_index, _flood_features
+    except Exception:
+        return None, []
 
-if __name__=="__main__":
-    app.run(host="127.0.0.1",port=5000,debug=True)
+
+def classify_site(lat, lon, index, features):
+    if index is None or not features:
+        return "unknown", None, None
+    p = Point(float(lon), float(lat))
+    # Roughly 100 m at Thailand latitudes; used only to relate a Site to a reported road.
+    candidate_idx = index.query(p.buffer(0.0012))
+    best_status, best_depth, best_distance = "unknown", None, 999.0
+    for idx in candidate_idx:
+        try:
+            geom = index.geometries[idx]
+            distance = p.distance(geom)
+            if distance > 0.0015:
+                continue
+            props = features[idx].get("properties", {}) or {}
+            status, depth = flood_status_from_properties(props)
+            priority = {"severe": 4, "moderate": 3, "low": 2, "unknown": 1}.get(status, 0)
+            current_priority = {"severe": 4, "moderate": 3, "low": 2, "unknown": 1}.get(best_status, 0)
+            if priority > current_priority or (priority == current_priority and distance < best_distance):
+                best_status, best_depth, best_distance = status, depth, distance
+        except Exception:
+            continue
+    if best_status == "unknown":
+        return "safe", None, None
+    # For display/API, treat an explicit low-water/receded report as low risk.
+    return best_status, best_depth, best_distance * 111000.0
+
+
+def get_sites(filters=None, include_flood=False, limit=None):
+    filters = filters or {}
+    province = clean(filters.get("province"))
+    amphur = clean(filters.get("amphur"))
+    q = clean(filters.get("q"))
+    south, west, north, east = [filters.get(k) for k in ("south", "west", "north", "east")]
+    conn = db()
+    try:
+        where = ["latitude IS NOT NULL", "longitude IS NOT NULL"]
+        params = []
+        if province:
+            where.append("province = ?"); params.append(province)
+        if amphur:
+            where.append("amphur = ?"); params.append(amphur)
+        if q:
+            where.append("(site_code LIKE ? OR location_name LIKE ? OR tumbol LIKE ? OR amphur LIKE ? OR province LIKE ?)")
+            like = f"%{q}%"; params.extend([like] * 5)
+        if None not in (south, west, north, east):
+            where += ["latitude BETWEEN ? AND ?", "longitude BETWEEN ? AND ?"]
+            params += [float(south), float(north), float(west), float(east)]
+        sql = f"SELECT site_code, location_name, tumbol, amphur, province, latitude, longitude FROM sites WHERE {' AND '.join(where)} ORDER BY site_code"
+        if limit is not None:
+            sql += " LIMIT ?"; params.append(int(limit))
+        return [row_to_dict(r) for r in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.close()
+
+
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+
+@app.get("/api/filters")
+def filters():
+    conn = db()
+    try:
+        provinces = [r[0] for r in conn.execute("SELECT DISTINCT province FROM sites WHERE province IS NOT NULL AND province<>'' ORDER BY province").fetchall()]
+        province = clean(request.args.get("province"))
+        if province:
+            amphurs = [r[0] for r in conn.execute("SELECT DISTINCT amphur FROM sites WHERE province=? AND amphur IS NOT NULL AND amphur<>'' ORDER BY amphur", (province,)).fetchall()]
+        else:
+            amphurs = [r[0] for r in conn.execute("SELECT DISTINCT amphur FROM sites WHERE amphur IS NOT NULL AND amphur<>'' ORDER BY amphur").fetchall()]
+        return jsonify({"provinces": provinces, "amphurs": amphurs})
+    finally:
+        conn.close()
+
+
+@app.get("/api/sites")
+def sites():
+    limit = min(max(request.args.get("limit", 5000, type=int), 1), 10000)
+    data = get_sites(request.args, include_flood=False, limit=limit)
+    if request.args.get("with_flood", "0") == "1":
+        index_obj, features = load_flood_index()
+        for s in data:
+            status, depth, distance = classify_site(s["latitude"], s["longitude"], index_obj, features)
+            s.update(flood_status=status, water_depth_cm=depth, flood_distance_m=distance)
+    return jsonify({"count": len(data), "limit": limit, "sites": data})
+
+
+@app.get("/api/site/<site_code>")
+def site(site_code):
+    conn = db()
+    try:
+        row = conn.execute("SELECT * FROM sites WHERE site_code = ? LIMIT 1", (site_code,)).fetchone()
+        if not row:
+            return jsonify({"error": "Site not found"}), 404
+        result = row_to_dict(row)
+        index_obj, features = load_flood_index()
+        status, depth, distance = classify_site(result["latitude"], result["longitude"], index_obj, features)
+        result.update(flood_status=status, water_depth_cm=depth, flood_distance_m=distance)
+        return jsonify(result)
+    finally:
+        conn.close()
+
+
+@app.get("/api/site-count")
+def site_count():
+    conn = db()
+    try:
+        total = conn.execute("SELECT COUNT(*) AS n FROM sites").fetchone()["n"]
+        provinces = conn.execute("SELECT COUNT(DISTINCT province) AS n FROM sites WHERE province IS NOT NULL AND province <> ''").fetchone()["n"]
+        return jsonify({"total": total, "provinces": provinces})
+    finally:
+        conn.close()
+
+
+@app.get("/api/dashboard-summary")
+def dashboard_summary():
+    sites_data = get_sites(request.args, limit=None)
+    index_obj, features = load_flood_index()
+    counts = {"total": len(sites_data), "flooded": 0, "severe": 0, "moderate": 0, "low": 0, "safe": 0, "unknown": 0}
+    for s in sites_data:
+        status, depth, distance = classify_site(s["latitude"], s["longitude"], index_obj, features)
+        counts[status] = counts.get(status, 0) + 1
+    counts["flooded"] = counts.get("severe", 0) + counts.get("moderate", 0) + counts.get("low", 0)
+    counts["matched"] = counts["total"]
+    return jsonify(counts)
+
+
+@app.get("/api/export.xlsx")
+def export_xlsx():
+    rows = get_sites(request.args, limit=None)
+    index_obj, features = load_flood_index()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Site Base Report"
+    headers = ["Site Code", "Location Name", "Tambon", "Amphur", "Province", "Latitude", "Longitude", "Flood Status", "Water Depth (cm)", "Distance to Flooded Road (m)"]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1769AA")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for s in rows:
+        status, depth, distance = classify_site(s["latitude"], s["longitude"], index_obj, features)
+        ws.append([
+            s["site_code"], s["location_name"], s["tumbol"], s["amphur"], s["province"],
+            s["latitude"], s["longitude"], status, depth, distance
+        ])
+    widths = [16, 48, 22, 22, 24, 13, 13, 16, 18, 28]
+    for i, w in enumerate(widths, 1): ws.column_dimensions[chr(64+i)].width = w
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    buf = BytesIO(); wb.save(buf); buf.seek(0)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return send_file(buf, as_attachment=True, download_name=f"site_base_flood_report_{stamp}.xlsx", mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/floodboard/roads")
+def floodboard_roads():
+    try:
+        content, _ = cached_get(FLOODBOARD_ROADS, "roads.geojson", ttl=60)
+        return Response(content, content_type="application/geo+json")
+    except Exception as e:
+        return jsonify({"error": "Cannot load FloodBoard roads data", "detail": str(e)}), 502
+
+
+@app.get("/api/floodboard/reports")
+def floodboard_reports():
+    try:
+        content, _ = cached_get(FLOODBOARD_REPORTS, "reports.csv", ttl=60)
+        return Response(content, content_type="text/csv; charset=utf-8")
+    except Exception as e:
+        return jsonify({"error": "Cannot load FloodBoard reports data", "detail": str(e)}), 502
+
+
+@app.get("/api/floodboard/stats")
+def floodboard_stats():
+    try:
+        content, _ = cached_get(FLOODBOARD_STATS, "stats.json", ttl=60)
+        return Response(content, content_type="application/json; charset=utf-8")
+    except Exception as e:
+        return jsonify({"error": "Cannot load FloodBoard stats", "detail": str(e)}), 502
+
+
+@app.get("/api/floodboard/feed")
+def floodboard_feed():
+    try:
+        content, _ = cached_get(FLOODBOARD_FEED, "feed.json", ttl=60)
+        return Response(content, content_type="application/json; charset=utf-8")
+    except Exception as e:
+        return jsonify({"error": "Cannot load FloodBoard feed", "detail": str(e)}), 502
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
